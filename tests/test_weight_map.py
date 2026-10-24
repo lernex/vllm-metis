@@ -19,12 +19,12 @@ from pathlib import Path
 
 import pytest
 
-MODEL_DIR = Path(
-    os.environ.get("METIS_MODEL_DIR", Path.home() / "kronos-scratch/logos/hfport/stage")
-)
+from conftest import model_dir  # noqa: E402
+
+MODEL_DIR = model_dir(need_weights=True)
+if MODEL_DIR is None or not (MODEL_DIR / "model.safetensors").exists():
+    pytest.skip("no release checkpoint: set METIS_MODEL_DIR", allow_module_level=True)
 WEIGHTS = MODEL_DIR / "model.safetensors"
-if not WEIGHTS.exists():
-    pytest.skip(f"no release checkpoint at {MODEL_DIR}", allow_module_level=True)
 
 import torch  # noqa: E402
 

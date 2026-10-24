@@ -18,11 +18,12 @@ from pathlib import Path
 
 import pytest
 
-MODEL_DIR = os.environ.get(
-    "METIS_MODEL_DIR", str(Path.home() / "kronos-scratch/logos/hfport/stage")
-)
-if not Path(MODEL_DIR, "tokenizer.json").exists():
-    pytest.skip(f"no Metis tokenizer at {MODEL_DIR}", allow_module_level=True)
+from conftest import model_dir  # noqa: E402
+
+_dir = model_dir()
+if _dir is None or not (_dir / "tokenizer.json").exists():
+    pytest.skip("no Metis tokenizer: set METIS_MODEL_DIR or log in to the Hub", allow_module_level=True)
+MODEL_DIR = str(_dir)
 
 import vllm_metis  # noqa: E402
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest  # noqa: E402

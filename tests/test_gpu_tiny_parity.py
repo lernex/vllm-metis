@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # fp8) lands orders of magnitude further; test_loaded_weights is the exact check.
 FP8_KL = 0.015
 FP8_MAX_DIFF = 1.0
-RELEASE = Path(os.environ.get("METIS_MODEL_DIR", Path.home() / "kronos-scratch/logos/hfport/stage"))
+RELEASE = Path(os.environ.get("METIS_MODEL_DIR", ""))
 
 
 @pytest.fixture(scope="module")
