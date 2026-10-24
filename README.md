@@ -1,7 +1,7 @@
 # vllm-metis
 
 A vLLM plugin for Lernex's Metis-1.6 models. Install it next to vLLM and
-`Lernex/Metis-1.6-Logos` serves like any other model: OpenAI-compatible API, reasoning split
+`Lernex/Metis-1.6-Logos` and `Lernex/Metis-1.6-Praxis` serve like any other model: OpenAI-compatible API, reasoning split
 out of the answer, tool calls parsed and typed, prefix caching, chunked prefill, CUDA graphs.
 
 It adds three things to vLLM, all registered through vLLM's `vllm.general_plugins` entry
@@ -33,22 +33,33 @@ vllm serve Lernex/Metis-1.6-Logos --trust-remote-code \
 `--trust-remote-code` lets vLLM read the model's configuration class; the model itself runs
 on this plugin's implementation, not on the repository's Transformers code.
 
-**Memory.** The BF16 weights alone are 20.8 GB, so BF16 wants a card with room to spare
-above that (32 GB or more). On a 16 or 24 GB card, quantize the weights to FP8 while
-loading:
+**Memory.** Praxis (3.0B) runs in BF16 on a 16 GB card. Logos (10.2B) is 20.8 GB in BF16,
+so it wants a card with room to spare above that (32 GB or more). On a 16 or 24 GB card,
+serve the FP8 checkpoint:
+
+```bash
+vllm serve Lernex/Metis-1.6-Logos-FP8 --trust-remote-code \
+    --reasoning-parser metis --enable-auto-tool-choice --tool-call-parser metis
+```
+
+`Metis-1.6-Logos-FP8` and `Metis-1.6-Praxis-FP8` are compressed-tensors FP8 checkpoints (11.2
+GB and 3.5 GB): FP8 weights with one scale per output channel and activations quantized per
+token at run time, for the routed experts, the Mamba input projections and the attention
+projections. The embedding, the latent projections, the shared expert, the Mamba output
+projections and every FP32 tensor stay as trained. The Mamba output projection is kept on
+purpose. It is 2% of the weights but nearly all of FP8's error: on the real weights,
+keeping it cut the top-20 KL to the reference from 0.022 to 0.007 on prose and from 0.088 to
+0.034 on a tool-calling chat. The checkpoint loads faster, downloads half the bytes and is
+both more accurate and faster than quantizing the BF16 weights while loading (see Status).
+SGLang reads the same checkpoints (`sglang-metis`).
+
+Quantizing the BF16 weights while loading also works, with one scale per tensor:
 
 ```bash
 vllm serve Lernex/Metis-1.6-Logos --trust-remote-code --quantization fp8_per_tensor \
     --reasoning-parser metis --enable-auto-tool-choice --tool-call-parser metis
 ```
 
-FP8 brings the weights to about 10.8 GB: the routed experts, the Mamba input projections and
-the attention projections go to FP8; the embedding, the latent projections, the shared
-expert, the Mamba output projections and every FP32 tensor stay as they are. The Mamba output
-projection is kept on purpose. It is 2% of the weights but nearly all of FP8's error: on the
-real weights, keeping it cut the top-20 KL to the reference from 0.022 to 0.007 on prose and
-from 0.088 to 0.034 on a tool-calling chat, for about 6% of single-stream speed (120 to 113
-tokens/s on an RTX 5070 Ti).
 `--quantization fp8` is the older spelling of the same thing. Use per-tensor:
 `fp8_per_block` does not run on RTX 50-series cards in vLLM 0.31, whose CUTLASS
 block-scaled GEMM rejects an output width that is not a multiple of 128, and the Mamba
@@ -215,21 +226,35 @@ repeated, alone, and again from the prefix cache.
   whole, and streamed in deltas of 1, 2, 3, 7 and all tokens, with and without history, plus
   truncation, `tool_choice: "none"`, each parser on its own and undeclared tools.
 
-**Not yet measured with the real weights.** `scripts/real_smoke.py` compares vLLM's prompt
-logprobs with logits from the native training runtime and from the Transformers port on the
-release's reference prompts, runs thinking and direct mode with and without tools through
-the parsers, and times one stream and a batch.
+**Real weights.** `scripts/real_smoke.py` compares vLLM's prompt logprobs with FP32 logits
+from the native training runtime on the release's reference prompts (a 16-token thinking
+chat, a 176-token chat with tools, 300 tokens of prose), runs thinking and direct mode with
+and without tools through the parsers, and times one stream and a batch of 32 on an RTX 5070
+Ti (16 GB). Mean top-20 KL to the reference, and how often the top token agrees:
+
+| Model | Weights | Thinking chat | Chat with tools | Prose | tok/s, 1 / 32 streams |
+|---|---|---|---|---|---|
+| Praxis | BF16 | 0.0053, 100% | 0.010, 95.5% | 0.0015, 98.7% | 201 / 1836 |
+| Praxis | FP8 checkpoint | 0.0077, 100% | 0.040, 89.8% | 0.0066, 97.7% | 231 / 2386 |
+| Praxis | BF16, `fp8_per_tensor` | 0.011, 93.8% | 0.048, 91.5% | 0.0076, 97.7% | 225 / 2100 |
+| Logos | FP8 checkpoint | 0.0048, 100% | 0.031, 91.5% | 0.0084, 95.3% | 117 / 770 |
+| Logos | BF16, `fp8_per_tensor` | 0.0062, 93.8% | 0.034, 91.5% | 0.0070, 96.0% | 113 / 659 |
+
+Praxis in BF16 is inside the noise floor of the native model run in BF16 (0.0073, 0.014,
+0.0022). In every configuration the thinking and direct answers are correct, tool calls come
+back typed, and `vllm serve` answers a tool round trip.
 
 ## Limitations
 
-* Tensor parallelism must divide the 10 Mamba groups and 10 KV heads (TP 1, 2, 5 or 10);
-  only TP 1 has been run. Pipeline parallelism is not supported.
+* Tensor parallelism must divide the Mamba groups and KV heads: 10 on Logos (TP 1, 2, 5 or
+  10), 8 on Praxis (TP 1, 2, 4 or 8). Only TP 1 has been run. Pipeline parallelism is not supported.
 * LoRA adapters and speculative decoding are untested.
 * The adaptive-depth and adaptive-k heads in the checkpoint are not used: the release runs
   the fixed policy (2 passes, top 4), which is what this plugin implements.
-* With FP8, the routed experts quantize activations with one scale per batch, so a request's
-  output can depend slightly on what it was batched with (vLLM's FP8 MoE does this for every
-  model).
+* With `--quantization fp8_per_tensor`, the routed experts quantize activations with one
+  scale per batch, so a request's output can depend slightly on what it was batched with
+  (vLLM's FP8 MoE does this for every model). The FP8 checkpoints scale each token on its
+  own and do not.
 
 ## Tests
 

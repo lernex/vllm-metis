@@ -810,7 +810,8 @@ class Metis16ForCausalLM(nn.Module, HasInnerState, IsHybrid, SupportsMambaPrefix
     def _expert_shards(
         self, param_name: str, stacked: torch.Tensor
     ) -> Iterator[tuple[torch.Tensor, str, int]]:
-        if param_name.endswith("w13_weight"):
+        # In an FP8 checkpoint the per-channel scales are stacked the same way as the weights.
+        if param_name.endswith(("w13_weight", "w13_weight_scale")):
             half = stacked.shape[1] // 2
             for expert in range(stacked.shape[0]):
                 yield stacked[expert, :half], "w1", expert
@@ -831,7 +832,7 @@ class Metis16ForCausalLM(nn.Module, HasInnerState, IsHybrid, SupportsMambaPrefix
                 raise KeyError(f"{checkpoint_name} maps to {name}, which this model does not have")
             param = params[name]
             loader = getattr(param, "weight_loader", default_weight_loader)
-            if name.endswith(("w13_weight", "w2_weight")):
+            if name.endswith(("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale")):
                 for shard, shard_id, expert in self._expert_shards(name, tensor):
                     loader(param, shard, name, shard_id=shard_id, expert_id=expert)
             else:
