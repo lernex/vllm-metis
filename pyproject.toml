@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vllm-metis"
+version = "0.1.0"
+description = "vLLM plugin for Lernex's Metis-1.6 models: the Metis16ForCausalLM architecture plus the metis reasoning and tool-call parsers"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [{ name = "Lernex" }]
+dependencies = ["vllm>=0.31,<0.32"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.entry-points."vllm.general_plugins"]
+metis = "vllm_metis:register"
+
+[tool.setuptools]
+packages = ["vllm_metis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not gpu'"
+markers = [
+    "gpu: needs a CUDA device and vLLM's GPU kernels",
+]
